@@ -8,13 +8,16 @@ layering below is designed so those extend, not rewrite, this code.
 ## Layout
 
 ```
-brokers/     broker adapters behind one interface (base.Broker) — zerodha.py
+brokers/     broker adapters behind one interface (base.Broker) — 4 vendors
 strategies/  signal generators behind one interface (base.Strategy)
              + indicators.py (pure-stdlib TA)
 risk/        risk.manager — sizing, stops, daily-loss guard
-execution/   engine — polls watchlist, applies risk, places paper orders
+execution/   engine (per-customer loop) + supervisor (multi-tenant orchestration)
 backtest/    runner (walk-forward) + synthetic data generator
 data/        store.py — SQLite schema & helpers (orders, positions, bars)
+tenancy/     models, vault (Fernet), store (scoped tables), service (Phase 3)
+api/         FastAPI admin dashboard + customer/compliance endpoints (Phase 3)
+config.py    config.yaml/.env loader + build_broker factory
 main.py      CLI: backtest | paper | positions
 ```
 
@@ -134,9 +137,81 @@ login (store the base32 2FA secret, generate the code at runtime). Zerodha/Upsto
 Angel One are NSE/BSE (INR, IST hours); Alpaca is US equities (USD, US hours) —
 symbol formats and trading calendars differ, so watchlists are broker-specific.
 
+## Multi-tenancy (Phase 3)
+
+Phase 3 turns the single-user system into a multi-tenant paper platform **without
+rewriting** the Broker/Strategy/risk/backtest cores — those still only see their
+existing interfaces. New modules (`tenancy/`, `api/`, `execution/supervisor.py`)
+layer on top. Requires `cryptography`, `fastapi`, `uvicorn` (see
+`requirements.txt`); run in a venv. Still **paper-only** — no live orders execute.
+
+### Customer model (`tenancy/models.py`)
+
+`Customer(id, name, email, broker, mode, status, equity, watchlist, risk,
+error_count, tos_version, tos_accepted_at, backtest_viewed_at)`.
+`mode ∈ {paper, live}`; `status ∈ {active, suspended, breaker_tripped, killed}`.
+`RiskLimits` mirrors Phase 1 `RiskConfig` fields and adds `is_tighter_or_equal()`
+so admin edits that would loosen a customer's limits can be rejected.
+
+### Tenant scoping (`tenancy/store.py`, `data/store.py`)
+
+All customer data lives in the same SQLite file, **every query scoped by
+`customer_id`** — there is no unscoped read. `data/store.py` `orders`/`positions`
+gained a `customer_id` column (default `"default"` preserves Phase 1/2 behavior);
+`PaperBroker`, the four adapters, and `config.build_broker` all take a
+`customer_id` that scopes the paper book. New tables: `customers`, `credentials`
+(ciphertext only), `consent`, `backtest_views`, `audit_log`, `control`.
+
+### Credential vault (`tenancy/vault.py`, `tenancy/service.py`)
+
+Broker API key/secret/token are encrypted at rest with **Fernet**; the key comes
+from the `VAULT_KEY` env var (generate: `python -c "from tenancy.vault import
+generate_key; print(generate_key())"`). Plaintext exists only transiently in
+memory when a customer's own adapter needs it — never persisted, never logged.
+`service.set_broker_credentials` encrypts; `service.load_broker_creds` decrypts
+scoped to one `customer_id` and returns a `brokers.credentials.Creds` injected
+into that customer's adapter via `build_broker(..., creds=...)`.
+
+### Compliance gate (`tenancy/service.py`)
+
+`can_go_live(customer_id)` returns True only when **both** hold: (a) current
+`TOS_VERSION` consent is recorded (timestamp + version in `consent`), and (b) the
+customer has viewed their real backtested metrics (`backtest_views`, from Phase
+1's `walk_forward`). `set_mode(..., "live")` calls the gate and **rejects** if it
+fails — enforced in code, the API returns 403, not just hidden in UI. Admins
+cannot force live (`actor="admin"` + live → rejected) nor loosen risk limits.
+No guaranteed-return or accuracy-target strings appear in code, config, or
+templates; backtest figures are labeled historical and non-indicative.
+
+### Per-customer execution (`execution/supervisor.py`)
+
+`Supervisor.run_cycle()` runs one `Engine` per active customer, each with its own
+adapter instance, decrypted creds, watchlist and `RiskConfig`. Isolation:
+- each customer's cycle is wrapped in its own try/except — one broker's error
+  never halts another's loop;
+- **circuit breaker**: `service.record_error` counts consecutive errors; at
+  `BREAKER_THRESHOLD` (3) the customer's status → `breaker_tripped`, an alert is
+  audited, and the loop is skipped until an admin resumes;
+- **kill switch / suspend** flags are re-read from `control` at the **top** of
+  each customer's cycle, so they take effect before the next poll, not on it.
+`Engine` gained an optional `on_event(kind, symbol, detail)` hook (default None =
+Phase 1/2 behavior) that writes every signal and order — with indicator values
+and timestamps — to that customer's `audit_log` for dispute resolution, plus a
+`flatten()` for the kill switch.
+
+### API + admin dashboard (`api/app.py`)
+
+FastAPI (`uvicorn api.app:app`). Customer/compliance: `POST /customers`,
+`/customers/{id}/consent`, `/customers/{id}/backtest-view`, `/customers/{id}/mode`
+(gate-enforced), `/customers/{id}/kill-switch` (`{flatten}`). Admin (server-
+rendered HTML): `GET /admin` (customers with mode/status/error-count), `GET
+/admin/customers/{id}` (per-customer audit log), `POST .../suspend|resume`, `POST
+.../risk` (tighten-only). Each request opens a scoped SQLite connection.
+
 ## Phase boundaries (do not build ahead)
 
-Phase 1 is paper-only, single broker, single user, CLI. Multi-broker,
-live orders, multi-tenancy, and admin UI are later phases — extend via the
-`Broker`/`Strategy` interfaces and a `mode` flag on `place_order`; do not thread
-tenant/user concerns into these modules yet.
+Phases 1-3 are **paper-only**. Live order execution (real broker order APIs, live
+fills, reconciliation) is a later, most-defensively-engineered phase — build it
+behind the existing `place_order` `mode` flag and the compliance gate, only on a
+proven strategy. Do not add live order routing, real fund movement, or
+accuracy/return promises before then.

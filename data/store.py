@@ -1,14 +1,17 @@
-"""SQLite persistence for paper-mode fills, positions and bar cache. Single
-file, single user. Schema is created on first use."""
+"""SQLite persistence for paper-mode fills, positions and bar cache. Multi-tenant:
+orders and positions are scoped by customer_id (default "default" preserves the
+Phase 1/2 single-user behavior). Schema is created on first use."""
 from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
 DB_PATH = Path(__file__).with_name("trading.db")
+DEFAULT_CUSTOMER = "default"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id TEXT NOT NULL DEFAULT 'default',
     ts TEXT NOT NULL,
     broker TEXT NOT NULL,
     symbol TEXT NOT NULL,
@@ -18,9 +21,11 @@ CREATE TABLE IF NOT EXISTS orders (
     mode TEXT NOT NULL DEFAULT 'paper'
 );
 CREATE TABLE IF NOT EXISTS positions (
-    symbol TEXT PRIMARY KEY,
+    customer_id TEXT NOT NULL DEFAULT 'default',
+    symbol TEXT NOT NULL,
     quantity INTEGER NOT NULL,
-    avg_price REAL NOT NULL
+    avg_price REAL NOT NULL,
+    PRIMARY KEY (customer_id, symbol)
 );
 CREATE TABLE IF NOT EXISTS bars (
     symbol TEXT NOT NULL,
@@ -39,28 +44,31 @@ def connect(path: Path | str = DB_PATH) -> sqlite3.Connection:
     return conn
 
 
-def log_order(conn, ts, broker, symbol, side, quantity, price, mode="paper") -> int:
+def log_order(conn, ts, broker, symbol, side, quantity, price, mode="paper",
+              customer_id=DEFAULT_CUSTOMER) -> int:
     cur = conn.execute(
-        "INSERT INTO orders (ts, broker, symbol, side, quantity, price, mode) "
-        "VALUES (?,?,?,?,?,?,?)",
-        (ts, broker, symbol, side, quantity, price, mode),
+        "INSERT INTO orders (customer_id, ts, broker, symbol, side, quantity, price, mode) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (customer_id, ts, broker, symbol, side, quantity, price, mode),
     )
     conn.commit()
     return cur.lastrowid
 
 
-def upsert_position(conn, symbol, quantity, avg_price) -> None:
+def upsert_position(conn, symbol, quantity, avg_price, customer_id=DEFAULT_CUSTOMER) -> None:
     if quantity == 0:
-        conn.execute("DELETE FROM positions WHERE symbol=?", (symbol,))
+        conn.execute("DELETE FROM positions WHERE customer_id=? AND symbol=?",
+                     (customer_id, symbol))
     else:
         conn.execute(
-            "INSERT INTO positions (symbol, quantity, avg_price) VALUES (?,?,?) "
-            "ON CONFLICT(symbol) DO UPDATE SET quantity=excluded.quantity, "
+            "INSERT INTO positions (customer_id, symbol, quantity, avg_price) VALUES (?,?,?,?) "
+            "ON CONFLICT(customer_id, symbol) DO UPDATE SET quantity=excluded.quantity, "
             "avg_price=excluded.avg_price",
-            (symbol, quantity, avg_price),
+            (customer_id, symbol, quantity, avg_price),
         )
     conn.commit()
 
 
-def get_positions(conn) -> list[sqlite3.Row]:
-    return conn.execute("SELECT * FROM positions").fetchall()
+def get_positions(conn, customer_id=DEFAULT_CUSTOMER) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM positions WHERE customer_id=?", (customer_id,)).fetchall()

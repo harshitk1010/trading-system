@@ -1,0 +1,5 @@
+# Phases 1-2 run on pure stdlib. Phase 3 (multi-tenant platform) adds:
+cryptography>=42      # Fernet credential vault
+fastapi>=0.110        # admin + compliance API
+uvicorn[standard]>=0.29
+httpx                 # TestClient / API testing

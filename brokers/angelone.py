@@ -14,9 +14,9 @@ class AngelOneBroker(PaperBroker):
 
     def __init__(self, quote_source: Callable[[str], Quote | None] | None = None,
                  historical_source: Callable[[str, str, int], list[Bar]] | None = None,
-                 db_path=None):
-        super().__init__(quote_source, historical_source, db_path)
-        self.creds = credentials.angelone()
+                 db_path=None, customer_id=None, creds=None):
+        super().__init__(quote_source, historical_source, db_path, customer_id)
+        self.creds = creds or credentials.angelone()
 
     def connect(self) -> None:
         # Paper: no auth. Live: SmartConnect(api_key).generateSession(code, mpin, totp).

@@ -88,13 +88,16 @@ class PaperBroker(Broker):
         quote_source: Callable[[str], "Quote | None"] | None = None,
         historical_source: Callable[[str, str, int], list[Bar]] | None = None,
         db_path=None,
+        customer_id: str | None = None,
     ):
         # In paper mode feeds are injected (synthetic/CSV). A live phase wraps the
-        # vendor SDK's quote/historical calls in these two hooks.
+        # vendor SDK's quote/historical calls in these two hooks. customer_id scopes
+        # the order/position book so tenants never share fills.
         from data import store
         self._store = store
         self._quote_source = quote_source
         self._historical_source = historical_source
+        self._customer_id = customer_id or store.DEFAULT_CUSTOMER
         self._conn = store.connect(db_path or store.DB_PATH)
 
     def get_quote(self, symbol: str) -> Quote | None:
@@ -107,6 +110,7 @@ class PaperBroker(Broker):
         oid = self._store.log_order(
             self._conn, order.ts, self.name, order.symbol,
             order.side, order.quantity, order.price, mode="paper",
+            customer_id=self._customer_id,
         )
         self._apply_fill(order)
         return f"PAPER-{oid}"
@@ -117,7 +121,7 @@ class PaperBroker(Broker):
     def get_positions(self) -> list[Position]:
         return [
             Position(r["symbol"], r["quantity"], r["avg_price"])
-            for r in self._store.get_positions(self._conn)
+            for r in self._store.get_positions(self._conn, self._customer_id)
         ]
 
     def _apply_fill(self, order: Order) -> None:
@@ -130,4 +134,4 @@ class PaperBroker(Broker):
             new_avg = total / abs(new_qty) if new_qty != 0 else 0.0
         else:
             new_avg = order.price if (new_qty != 0 and (new_qty > 0) != (pos.quantity > 0)) else pos.avg_price
-        self._store.upsert_position(self._conn, order.symbol, new_qty, new_avg)
+        self._store.upsert_position(self._conn, order.symbol, new_qty, new_avg, self._customer_id)

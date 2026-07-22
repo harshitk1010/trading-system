@@ -81,8 +81,11 @@ def load_config(path: Path | str = CONFIG_PATH) -> Config:
     )
 
 
-def build_broker(name: str, quote_source=None, historical_source=None):
-    """Factory: map broker name -> adapter instance. New brokers register here."""
+def build_broker(name: str, quote_source=None, historical_source=None,
+                 customer_id=None, creds=None):
+    """Factory: map broker name -> adapter instance. New brokers register here.
+    customer_id scopes the paper book; creds injects a customer's decrypted
+    credentials (else the adapter falls back to global .env)."""
     from brokers.zerodha import ZerodhaBroker
     from brokers.upstox import UpstoxBroker
     from brokers.angelone import AngelOneBroker
@@ -95,4 +98,5 @@ def build_broker(name: str, quote_source=None, historical_source=None):
     }
     if name not in registry:
         raise ValueError(f"unknown broker '{name}' — choose one of {list(registry)}")
-    return registry[name](quote_source=quote_source, historical_source=historical_source)
+    return registry[name](quote_source=quote_source, historical_source=historical_source,
+                          customer_id=customer_id, creds=creds)

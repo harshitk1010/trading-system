@@ -33,6 +33,13 @@ class Engine:
     equity: float = 100_000.0
     interval: str = "day"
     open_trades: dict[str, OpenTrade] = field(default_factory=dict)
+    # optional audit hook: on_event(kind, symbol, detail) — used by the multi-tenant
+    # supervisor to record every signal + order. None keeps Phase 1/2 behavior.
+    on_event: object = None
+
+    def _emit(self, kind, symbol, detail) -> None:
+        if self.on_event:
+            self.on_event(kind, symbol, detail)
 
     def _now(self) -> str:
         q = self.broker.get_quote(self.watchlist[0]) if self.watchlist else None
@@ -53,20 +60,29 @@ class Engine:
                 continue
 
             sig = self.strategy.evaluate(bars)
+            self._emit("signal", symbol, {
+                "ts": ts, "price": price, "action": sig.action,
+                "strength": round(sig.strength, 4), "indicators": sig.reason,
+            })
             if sig.action not in (BUY, SELL):
                 continue
             ok, qty, reason = self.risk.approve_entry(self.equity, price, sig.action)
             if not ok:
+                self._emit("signal", symbol, {"ts": ts, "action": sig.action,
+                                              "skipped": reason})
                 continue
             self._enter(symbol, sig.action, qty, price, ts, sig.reason)
 
     def _enter(self, symbol, side, qty, price, ts, why) -> None:
-        self.broker.place_order(Order(symbol, side, qty, price, ts))
+        oid = self.broker.place_order(Order(symbol, side, qty, price, ts))
         self.open_trades[symbol] = OpenTrade(
             symbol, side, qty, price,
             self.risk.stop_price(price, side),
             self.risk.target_price(price, side),
         )
+        self._emit("order", symbol, {"ts": ts, "order_id": oid, "side": side,
+                                     "qty": qty, "price": price, "reason": "entry",
+                                     "indicators": why})
 
     def _manage_exit(self, symbol, price, ts) -> None:
         t = self.open_trades[symbol]
@@ -75,11 +91,33 @@ class Engine:
         if not (hit_stop or hit_target):
             return
         exit_side = SELL if t.side == BUY else BUY
-        self.broker.place_order(Order(symbol, exit_side, t.qty, price, ts))
+        oid = self.broker.place_order(Order(symbol, exit_side, t.qty, price, ts))
         pnl = (price - t.entry) * t.qty * (1 if t.side == BUY else -1)
         self.risk.record_pnl(pnl)
         self.equity += pnl
         del self.open_trades[symbol]
+        self._emit("order", symbol, {"ts": ts, "order_id": oid, "side": exit_side,
+                                     "qty": t.qty, "price": price,
+                                     "reason": "stop" if hit_stop else "target",
+                                     "pnl": round(pnl, 2)})
+
+    def flatten(self, price_source=None) -> int:
+        """Close all open positions at market (paper). Returns count closed. Used
+        by the kill switch."""
+        closed = 0
+        for symbol, t in list(self.open_trades.items()):
+            price = price_source(symbol) if price_source else t.entry
+            exit_side = SELL if t.side == BUY else BUY
+            oid = self.broker.place_order(Order(symbol, exit_side, t.qty, price, ""))
+            pnl = (price - t.entry) * t.qty * (1 if t.side == BUY else -1)
+            self.risk.record_pnl(pnl)
+            self.equity += pnl
+            del self.open_trades[symbol]
+            self._emit("order", symbol, {"order_id": oid, "side": exit_side,
+                                         "qty": t.qty, "price": price,
+                                         "reason": "flatten", "pnl": round(pnl, 2)})
+            closed += 1
+        return closed
 
 
 def _run_demo() -> None:
