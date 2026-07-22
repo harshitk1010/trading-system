@@ -256,9 +256,16 @@ Before any live capital, the strategy was validated on **real** free NSE data
 (3) **low-volatility DOES show a risk-adjusted edge** — Sharpe 1.08 vs equal-weight
 0.94 vs Nifty 0.76, drawdown −29% vs −39%, beats Nifty on Sharpe in every
 sub-period, low turnover (cost/tax friendly). Documented anomaly, not curve-fit.
-Caveat: modest vs equal-weight, lags in strong bull rips, ~10y single sample,
-residual survivorship. It is the one candidate worth hardening before any capital;
-the timing/momentum signals are not.
+Caveat: modest vs equal-weight, lags in strong bull rips, ~10y single sample.
+
+Robustness (`backtest/lowvol_robust.py`): (a) NSE universe **bootstrap** — low-vol
+beat equal-weight on Sharpe in 21/25 random sub-universes (84%), so the India edge
+is intrinsic to low-vol selection, not the specific survivor list; (b) **cross-
+market** — low-vol did NOT replicate in the US (Sharpe 0.45 vs 0.74 equal-weight)
+over 2015-25, a decade dominated by high-vol mega-cap tech. Net: the edge is real
+and robust **within Indian large-caps** but **regime/market-dependent, not a
+universal law**. Treat as an India-specific candidate held with humility; not
+confirmed enough for real capital without more history/periods.
 
 ## Live trading (Zerodha) — behind the compliance gate
 

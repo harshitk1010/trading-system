@@ -18,16 +18,17 @@ _HEADERS = {"User-Agent": "Mozilla/5.0"}
 _INTERVAL = {"day": "1d", "1d": "1d", "week": "1wk", "hour": "1h", "60minute": "1h"}
 
 
-def yahoo_symbol(symbol: str) -> str:
-    """Map a plain NSE ticker to Yahoo's symbol. Indices/already-suffixed pass through."""
-    if symbol.startswith("^") or "." in symbol:
+def yahoo_symbol(symbol: str, suffix: str = ".NS") -> str:
+    """Map a plain ticker to Yahoo's symbol. Indices/already-suffixed pass
+    through; suffix="" (e.g. US market) passes the raw ticker."""
+    if symbol.startswith("^") or "." in symbol or not suffix:
         return symbol
-    return f"{symbol}.NS"
+    return f"{symbol}{suffix}"
 
 
 def fetch(symbol: str, interval: str = "day", rng: str = "5y",
-          timeout: float = 20.0) -> list[Bar]:
-    r = httpx.get(BASE + yahoo_symbol(symbol),
+          timeout: float = 20.0, suffix: str = ".NS") -> list[Bar]:
+    r = httpx.get(BASE + yahoo_symbol(symbol, suffix),
                   params={"range": rng, "interval": _INTERVAL.get(interval, "1d")},
                   headers=_HEADERS, timeout=timeout)
     r.raise_for_status()
@@ -49,13 +50,13 @@ def fetch(symbol: str, interval: str = "day", rng: str = "5y",
 class YahooFeed:
     """Caches fetched series so repeated get_historical calls don't refetch."""
 
-    def __init__(self, interval: str = "day", rng: str = "5y"):
-        self.interval, self.rng = interval, rng
+    def __init__(self, interval: str = "day", rng: str = "5y", suffix: str = ".NS"):
+        self.interval, self.rng, self.suffix = interval, rng, suffix
         self._cache: dict[str, list[Bar]] = {}
 
     def bars(self, symbol: str, limit: int | None = None) -> list[Bar]:
         if symbol not in self._cache:
-            self._cache[symbol] = fetch(symbol, self.interval, self.rng)
+            self._cache[symbol] = fetch(symbol, self.interval, self.rng, suffix=self.suffix)
         b = self._cache[symbol]
         return b[-limit:] if limit else b
 
