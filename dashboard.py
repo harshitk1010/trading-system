@@ -187,9 +187,10 @@ trades = closed_trades(conn)
 wins = sum(1 for t in trades if t["pnl"] > 0)
 losses = sum(1 for t in trades if t["pnl"] < 0)
 win_rate = wins / (wins + losses) if (wins + losses) else 0.0
-realized = engine.equity - customer.equity
+realized = sum(t["pnl"] for t in trades)          # from DB — survives restarts
 unrealized = sum(((feed.last_price(p.symbol) or p.avg_price) - p.avg_price) * p.quantity
                  for p in positions)
+equity = customer.equity + realized + unrealized  # starting + realized + open MTM
 last = feed.last_price(symbol) or (closes[-1] if closes else 0)
 prev = closes[-2] if len(closes) > 1 else last
 chg, chg_pct = last - prev, ((last - prev) / prev * 100 if prev else 0)
@@ -198,8 +199,8 @@ chg, chg_pct = last - prev, ((last - prev) / prev * 100 if prev else 0)
 with st.container(border=True):
     st.markdown("##### Account summary")
     m = st.columns(5)
-    m[0].metric("Equity", rupee(engine.equity), f"{realized:+,.0f}")
-    m[1].metric("Today's P&L", rupee(realized), f"{(realized/customer.equity*100):+.2f}%")
+    m[0].metric("Equity", rupee(equity), f"{realized + unrealized:+,.0f}")
+    m[1].metric("Realized P&L", rupee(realized), f"{(realized/customer.equity*100):+.2f}%")
     m[2].metric("Unrealized P&L", rupee(unrealized))
     m[3].metric("Win rate", f"{win_rate*100:.0f}%", f"{wins}W / {losses}L", delta_color="off")
     m[4].metric("Open / Closed", f"{len(positions)} / {wins + losses}")
