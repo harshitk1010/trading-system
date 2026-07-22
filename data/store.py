@@ -38,7 +38,10 @@ CREATE TABLE IF NOT EXISTS bars (
 
 
 def connect(path: Path | str = DB_PATH) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(path))
+    # check_same_thread=False: the Streamlit dashboard reuses one connection across
+    # reruns that may land on different threads. Access stays sequential (no
+    # concurrent writes), so this is safe.
+    conn = sqlite3.connect(str(path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
     return conn
