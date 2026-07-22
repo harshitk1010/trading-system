@@ -82,10 +82,11 @@ def load_config(path: Path | str = CONFIG_PATH) -> Config:
 
 
 def build_broker(name: str, quote_source=None, historical_source=None,
-                 customer_id=None, creds=None):
+                 customer_id=None, creds=None, mode="paper", kite=None):
     """Factory: map broker name -> adapter instance. New brokers register here.
     customer_id scopes the paper book; creds injects a customer's decrypted
-    credentials (else the adapter falls back to global .env)."""
+    credentials (else the adapter falls back to global .env). mode="live" is only
+    honored by adapters with a live path (currently zerodha)."""
     from brokers.zerodha import ZerodhaBroker
     from brokers.upstox import UpstoxBroker
     from brokers.angelone import AngelOneBroker
@@ -100,5 +101,10 @@ def build_broker(name: str, quote_source=None, historical_source=None,
     }
     if name not in registry:
         raise ValueError(f"unknown broker '{name}' — choose one of {list(registry)}")
-    return registry[name](quote_source=quote_source, historical_source=historical_source,
-                          customer_id=customer_id, creds=creds)
+    kwargs = dict(quote_source=quote_source, historical_source=historical_source,
+                  customer_id=customer_id, creds=creds)
+    if name == "zerodha":
+        kwargs.update(mode=mode, kite=kite)
+    elif mode == "live":
+        raise ValueError(f"live mode not implemented for broker '{name}' (paper only)")
+    return registry[name](**kwargs)

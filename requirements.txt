@@ -6,3 +6,5 @@ httpx                 # TestClient / API testing
 # Phase 4 (mock paper-trading dashboard):
 streamlit>=1.40       # dashboard UI
 plotly>=5.20          # price chart + indicator overlays
+# Real-data validation + LIVE trading (optional; paper/mock need none of these):
+kiteconnect>=4        # Zerodha live orders/quotes/history (LIVE mode only)

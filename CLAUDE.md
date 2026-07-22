@@ -241,10 +241,53 @@ vault/.env) is a config/credential change only — the dashboard, strategy, and
 risk code are untouched; only the data source behind the interface changes (the
 real feed arrives with the already-planned Zerodha live phase).
 
+## Real-data validation (edge gate)
+
+Before any live capital, the strategy was validated on **real** free NSE data
+(`data/yahoo_feed.py`, a drop-in historical source behind the Broker interface):
+- `backtest/real_validate.py` — existing walk-forward on real prices + buy&hold.
+- `backtest/momentum.py` — cross-sectional momentum, survivorship-corrected.
+
+**Finding: no tradeable edge.** The weighted-indicator strategy returns ~0 vs
+buy&hold; momentum loses to Nifty and equal-weight once laggards are included.
+Only the 200d trend filter robustly helps (drawdown, not returns). Do not put
+real capital, or build predictive-analytics features, on these signals as-is.
+
+## Live trading (Zerodha) — behind the compliance gate
+
+Live order execution exists for Zerodha only, opt-in via `mode="live"`; every
+other broker and the default remain paper. Live is only reachable after the
+Phase 3 gate passes (`service.set_mode(..,"live")` requires ToS consent + a viewed
+backtest) and real credentials are in the vault. Needs `kiteconnect`.
+
+- `brokers/zerodha.py` — `mode="paper"` (default) is the unchanged PaperBroker
+  SQLite path; `mode="live"` routes `get_quote`/`get_historical`/`place_order`/
+  `cancel_order`/`get_positions` to Kite Connect. The Kite client is **injectable**
+  (`kite=`) so the live path is unit-tested with a fake (no real orders). Live
+  orders are logged with `mode='live'` and do **not** touch the paper book —
+  `kite.positions()` is the source of truth. Order rejections raise
+  `LiveOrderError` (fail-safe; never blind-retry).
+- `brokers/kite_client.py` — `build_kite(creds)` (lazy import), `InstrumentMap`
+  (tradingsymbol→instrument_token for historical), interval/date-window helpers.
+- `execution/live_guard.py` — `LiveGuard`: pre-trade checks (market hours, kill
+  switch, daily-loss vs the **real** account balance from `kite.margins()`,
+  max-position notional) and `reconcile(local, broker)` to detect position drift
+  (halt-and-investigate, never auto-correct).
+- `config.build_broker(.., mode=, kite=)` and the supervisor pass `customer.mode`.
+- `backtest/live_smoke.py` — fake-Kite smoke test of the whole live path + guard
+  + paper regression. **No real credentials or orders are exercised anywhere.**
+
+Operational reality (must be done by the account owner, not automated blindly):
+Kite API subscription (₹500/mo); **daily** access-token regeneration (~6am IST);
+SEBI retail-algo rules (verify with the broker); start at 1 share to prove
+plumbing; taxes/slippage worsen the already-absent edge. Real-account validation
+requires the owner's own credentials — the code path is tested, live fills are not.
+
 ## Phase boundaries (do not build ahead)
 
-Phases 1-4 are **paper-only** (Phase 4 is mock data on top of paper). Live order execution (real broker order APIs, live
-fills, reconciliation) is a later, most-defensively-engineered phase — build it
-behind the existing `place_order` `mode` flag and the compliance gate, only on a
-proven strategy. Do not add live order routing, real fund movement, or
-accuracy/return promises before then.
+Phases 1-4 are **paper-only** (Phase 4 is mock data on top of paper). Live
+Zerodha execution is built and unit-tested with a fake client behind the
+`place_order` `mode` flag + compliance gate, but has **NOT** been run against a
+real account (needs the owner's credentials + funded account) and the strategy
+has **no proven edge** (see the edge gate). Do not enable live mode with real
+funds on these signals, and never add accuracy/return promises anywhere.

@@ -35,9 +35,11 @@ class Supervisor:
     def _build_engine(self, c) -> Engine:
         quote, hist = self.feed_factory(c)
         creds = service.load_broker_creds(self.conn, c.id, c.broker)
+        # mode comes from the customer; live is only reachable past the compliance
+        # gate (service.set_mode rejects live without ToS + backtest recorded).
         broker = config.build_broker(
             c.broker, quote_source=quote, historical_source=hist,
-            customer_id=c.id, creds=creds)
+            customer_id=c.id, creds=creds, mode=c.mode)
         broker.connect()
         rm = RiskManager(RiskConfig(**c.risk.as_dict()))
         rm.start_day(c.equity)
