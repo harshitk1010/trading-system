@@ -1,8 +1,10 @@
-"""Broker interface. Every broker adapter (Zerodha now; Upstox, Fyers, etc.
-later) implements this. Nothing above this layer knows which broker is live."""
+"""Broker interface. Every broker adapter (Zerodha, Upstox, Angel One, Alpaca)
+implements this. Nothing above this layer knows which broker is live."""
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Callable
 
 
 @dataclass
@@ -61,5 +63,71 @@ class Broker(ABC):
         simulated fill to SQLite and returns a synthetic id — no real API call."""
 
     @abstractmethod
+    def cancel_order(self, order_id: str) -> bool:
+        """Cancel a resting order by id. Paper mode fills immediately, so there is
+        nothing resting — returns True as an idempotent no-op ack."""
+
+    @abstractmethod
     def get_positions(self) -> list[Position]:
         """Current open positions."""
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class PaperBroker(Broker):
+    """Shared paper-mode implementation. Subclasses (one per vendor) supply
+    credential loading + connect/get_quote/get_historical; the SQLite order/
+    position book is identical across all of them. No real orders are sent."""
+
+    name = "paper"
+
+    def __init__(
+        self,
+        quote_source: Callable[[str], "Quote | None"] | None = None,
+        historical_source: Callable[[str, str, int], list[Bar]] | None = None,
+        db_path=None,
+    ):
+        # In paper mode feeds are injected (synthetic/CSV). A live phase wraps the
+        # vendor SDK's quote/historical calls in these two hooks.
+        from data import store
+        self._store = store
+        self._quote_source = quote_source
+        self._historical_source = historical_source
+        self._conn = store.connect(db_path or store.DB_PATH)
+
+    def get_quote(self, symbol: str) -> Quote | None:
+        return self._quote_source(symbol) if self._quote_source else None
+
+    def get_historical(self, symbol: str, interval: str, limit: int) -> list[Bar]:
+        return self._historical_source(symbol, interval, limit) if self._historical_source else []
+
+    def place_order(self, order: Order) -> str:
+        oid = self._store.log_order(
+            self._conn, order.ts, self.name, order.symbol,
+            order.side, order.quantity, order.price, mode="paper",
+        )
+        self._apply_fill(order)
+        return f"PAPER-{oid}"
+
+    def cancel_order(self, order_id: str) -> bool:
+        return True  # paper fills are immediate; nothing resting to cancel
+
+    def get_positions(self) -> list[Position]:
+        return [
+            Position(r["symbol"], r["quantity"], r["avg_price"])
+            for r in self._store.get_positions(self._conn)
+        ]
+
+    def _apply_fill(self, order: Order) -> None:
+        book = {p.symbol: p for p in self.get_positions()}
+        pos = book.get(order.symbol, Position(order.symbol, 0, 0.0))
+        signed = order.quantity if order.side == "BUY" else -order.quantity
+        new_qty = pos.quantity + signed
+        if pos.quantity == 0 or (pos.quantity > 0) == (signed > 0):
+            total = pos.avg_price * abs(pos.quantity) + order.price * order.quantity
+            new_avg = total / abs(new_qty) if new_qty != 0 else 0.0
+        else:
+            new_avg = order.price if (new_qty != 0 and (new_qty > 0) != (pos.quantity > 0)) else pos.avg_price
+        self._store.upsert_position(self._conn, order.symbol, new_qty, new_avg)

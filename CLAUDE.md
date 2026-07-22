@@ -106,6 +106,34 @@ python main.py paper       # one paper engine cycle on synthetic feed
 python main.py positions   # dump paper position book from SQLite
 ```
 
+## Broker adapters (Phase 2)
+
+Four adapters, all subclassing `PaperBroker` (in `brokers/base.py`), which holds
+the shared paper-mode SQLite order/position book. Each vendor file only supplies
+credential loading + `connect`/`get_quote`/`get_historical`; `place_order` /
+`cancel_order` / `get_positions` are inherited and identical across brokers. All
+still **paper-only** — no real orders. Interface gained `cancel_order(order_id)
+-> bool` (paper: immediate fills, so it's an idempotent True no-op).
+
+Selection is by `config.yaml` (`broker: zerodha|upstox|angelone|alpaca`);
+`config.build_broker(name, quote_source, historical_source)` is the factory. The
+engine/strategy/risk code is unchanged — it only sees the `Broker` interface.
+Credentials load from `.env` via `brokers/credentials.py` (see `.env.example`);
+paper mode tolerates missing creds.
+
+| Adapter | SDK | Auth flow | Token / refresh | Rate limits (live phase) |
+|---|---|---|---|---|
+| `zerodha.py` | `kiteconnect` | api_key+secret → request_token → **daily** access_token | Access token expires ~6am IST daily; re-login each session | ~3 req/s; historical has per-candle caps |
+| `upstox.py` | `upstox-python-sdk` | OAuth2 redirect (api_key/secret/redirect_uri) → access_token | Access token expires **daily**; re-run OAuth redirect | ~25–50 req/s tiered per endpoint |
+| `angelone.py` | `SmartApi-python` | `generateSession(client_code, mpin, totp)` | TOTP from 2FA secret each login; JWT + refresh token, short-lived | Publisher limits vary by endpoint; historical is throttled |
+| `alpaca.py` | `alpaca-py` | Static api_key_id + secret_key | Long-lived keys, no daily refresh; `paper=True` routes to paper endpoint | ~200 req/min (data plan dependent); US market hours only |
+
+Quirks to remember for the live phase: three of four (Zerodha, Upstox, Angel One)
+need a **daily** re-auth; Alpaca does not. Angel One requires a live **TOTP** at
+login (store the base32 2FA secret, generate the code at runtime). Zerodha/Upstox/
+Angel One are NSE/BSE (INR, IST hours); Alpaca is US equities (USD, US hours) —
+symbol formats and trading calendars differ, so watchlists are broker-specific.
+
 ## Phase boundaries (do not build ahead)
 
 Phase 1 is paper-only, single broker, single user, CLI. Multi-broker,

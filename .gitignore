@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 *.db
+.env
 data/trading.db
 .DS_Store
 .venv/

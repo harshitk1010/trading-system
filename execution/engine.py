@@ -2,7 +2,12 @@
 strategy for a signal, applies risk, and places (paper) orders. Manages open
 positions with stop-loss / take-profit exits. Paper mode only in Phase 1."""
 from __future__ import annotations
+import sys
+from pathlib import Path
 from dataclasses import dataclass, field
+
+if __package__ in (None, ""):  # allow `python3 execution/engine.py`
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from brokers.base import Broker, Order
 from strategies.base import Strategy, BUY, SELL
@@ -75,3 +80,41 @@ class Engine:
         self.risk.record_pnl(pnl)
         self.equity += pnl
         del self.open_trades[symbol]
+
+
+def _run_demo() -> None:
+    """Entry point: build the broker selected in config.yaml, feed it synthetic
+    demo data, and run one poll cycle. The Engine/strategy/risk code is broker-
+    agnostic — only the factory changes per broker."""
+    import config as cfg
+    from brokers.base import Quote
+    from strategies.weighted_indicator import WeightedIndicatorStrategy
+    from risk.manager import RiskManager, RiskConfig
+    from backtest import synthetic
+
+    cfg.load_env()
+    conf = cfg.load_config()
+    bars = synthetic.generate(n=400, seed=11)
+    quote = lambda symbol: Quote(symbol, bars[-1].close, bars[-1].ts)
+    historical = lambda symbol, interval, limit: bars[-limit:]
+
+    broker = cfg.build_broker(conf.broker, quote_source=quote, historical_source=historical)
+    broker.connect()
+    engine = Engine(
+        broker=broker,
+        strategy=WeightedIndicatorStrategy(threshold=0.20),
+        risk=RiskManager(RiskConfig()),
+        watchlist=list(conf.watchlist),
+        equity=conf.equity,
+        interval=conf.interval,
+    )
+    engine.risk.start_day(engine.equity)
+    engine.step()
+    missing = broker.creds.missing()
+    print(f"[{broker.name}] cycle ok | mode={conf.mode} | "
+          f"open_trades={len(engine.open_trades)} | equity={engine.equity:,.0f}"
+          + (f" | creds missing (paper ok): {missing}" if missing else " | creds present"))
+
+
+if __name__ == "__main__":
+    _run_demo()

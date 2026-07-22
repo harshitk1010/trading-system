@@ -1,0 +1,8 @@
+# Active broker: zerodha | upstox | angelone | alpaca
+broker: zerodha
+
+mode: paper          # phase 1-2: paper only
+equity: 100000
+interval: day
+watchlist:
+  - DEMO

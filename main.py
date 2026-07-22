@@ -1,4 +1,4 @@
-"""CLI entrypoint. Phase 1: single user, single broker (Zerodha), paper only.
+"""CLI entrypoint. Paper only. Active broker is chosen in config.yaml.
 
   python main.py backtest              walk-forward backtest on synthetic data
   python main.py paper                 run one paper engine cycle on synthetic feed
@@ -7,8 +7,8 @@
 from __future__ import annotations
 import sys
 
-from brokers.zerodha import ZerodhaBroker, now_iso
-from brokers.base import Quote, Bar
+import config as cfg
+from brokers.base import Quote
 from strategies.weighted_indicator import WeightedIndicatorStrategy
 from risk.manager import RiskManager, RiskConfig
 from execution.engine import Engine
@@ -33,26 +33,32 @@ def cmd_backtest():
 
 
 def cmd_paper():
+    cfg.load_env()
+    conf = cfg.load_config()
     quote, historical = _synthetic_feed()
-    broker = ZerodhaBroker(quote_source=quote, historical_source=historical)
+    broker = cfg.build_broker(conf.broker, quote_source=quote, historical_source=historical)
     broker.connect()
     engine = Engine(
         broker=broker,
         strategy=WeightedIndicatorStrategy(threshold=0.20),
         risk=RiskManager(RiskConfig()),
-        watchlist=["DEMO"],
+        watchlist=list(conf.watchlist),
+        equity=conf.equity,
+        interval=conf.interval,
     )
     engine.risk.start_day(engine.equity)
     engine.step()
-    print("paper cycle complete. positions:")
-    for p in broker.get_positions():
+    print(f"[{broker.name}] paper cycle complete. positions:")
+    positions = broker.get_positions()
+    for p in positions:
         print(f"  {p.symbol} qty={p.quantity} avg={p.avg_price:.2f}")
-    if not broker.get_positions():
+    if not positions:
         print("  (none)")
 
 
 def cmd_positions():
-    broker = ZerodhaBroker()
+    conf = cfg.load_config()
+    broker = cfg.build_broker(conf.broker)
     for p in broker.get_positions():
         print(f"  {p.symbol} qty={p.quantity} avg={p.avg_price:.2f}")
 
