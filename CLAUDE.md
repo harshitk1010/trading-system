@@ -208,9 +208,42 @@ rendered HTML): `GET /admin` (customers with mode/status/error-count), `GET
 /admin/customers/{id}` (per-customer audit log), `POST .../suspend|resume`, `POST
 .../risk` (tighten-only). Each request opens a scoped SQLite connection.
 
+## Mock dashboard (Phase 4)
+
+A Streamlit dashboard (`dashboard.py`) visualizes the full pipeline for one demo
+tenant on **mock data — no credentials, no network**. Adds `streamlit`, `plotly`
+(see `requirements.txt`); run `.venv/bin/streamlit run dashboard.py`.
+
+- **Mock broker** (`brokers/mock.py`): a `PaperBroker` (`name="mock"`, registered
+  in `config.build_broker`) whose market data comes entirely from an injected
+  synthetic feed. No creds — `credentials.Creds("mock", {})`.
+- **Mock feed** (`data/mock_feed.py`): reuses Phase 1's `backtest.synthetic.generate`
+  to pre-roll a long deterministic series per symbol, then reveals bars one at a
+  time (`advance()`) so a running dashboard sees an evolving tape. Exposes
+  `quote_source` / `historical_source` callables shaped exactly like the Broker
+  interface's `get_quote` / `get_historical`.
+- **Demo tenant**: customer `demo` (`broker="mock"`, `mode="paper"`) created on
+  first load via the Phase 3 tenancy service; all reads/writes scoped to its
+  `customer_id`. The dashboard visualizes only this one tenant.
+- **Display**: plotly candlestick + EMA20/50/200 + Bollinger overlay; current
+  signal (BUY/SELL/HOLD) with confidence % and per-indicator vote table (parsed
+  from `Signal.reason`); open positions + realized/unrealized P&L; recent trades
+  from the DB (`data/store.get_orders`); Start/Stop/Reset; a persistent
+  "MOCK DATA — NOT LIVE" banner. The run loop advances the feed one bar and calls
+  `engine.step()` per refresh.
+
+**Swap contract (by design, verified):** `dashboard.py`, the strategy, and the
+risk manager read market data **only** through the Broker interface and trades
+**only** from the DB; the mock feed is injected once at `build_broker(...)` time.
+There is **no** mock-vs-real branching in the dashboard. Switching the demo
+customer's `broker` from `mock` to `zerodha` (with real `KITE_*` creds in the
+vault/.env) is a config/credential change only — the dashboard, strategy, and
+risk code are untouched; only the data source behind the interface changes (the
+real feed arrives with the already-planned Zerodha live phase).
+
 ## Phase boundaries (do not build ahead)
 
-Phases 1-3 are **paper-only**. Live order execution (real broker order APIs, live
+Phases 1-4 are **paper-only** (Phase 4 is mock data on top of paper). Live order execution (real broker order APIs, live
 fills, reconciliation) is a later, most-defensively-engineered phase — build it
 behind the existing `place_order` `mode` flag and the compliance gate, only on a
 proven strategy. Do not add live order routing, real fund movement, or

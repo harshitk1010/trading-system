@@ -3,3 +3,6 @@ cryptography>=42      # Fernet credential vault
 fastapi>=0.110        # admin + compliance API
 uvicorn[standard]>=0.29
 httpx                 # TestClient / API testing
+# Phase 4 (mock paper-trading dashboard):
+streamlit>=1.40       # dashboard UI
+plotly>=5.20          # price chart + indicator overlays

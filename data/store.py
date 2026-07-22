@@ -72,3 +72,9 @@ def upsert_position(conn, symbol, quantity, avg_price, customer_id=DEFAULT_CUSTO
 def get_positions(conn, customer_id=DEFAULT_CUSTOMER) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT * FROM positions WHERE customer_id=?", (customer_id,)).fetchall()
+
+
+def get_orders(conn, customer_id=DEFAULT_CUSTOMER, limit=50) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM orders WHERE customer_id=? ORDER BY id DESC LIMIT ?",
+        (customer_id, limit)).fetchall()

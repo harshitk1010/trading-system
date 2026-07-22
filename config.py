@@ -90,11 +90,13 @@ def build_broker(name: str, quote_source=None, historical_source=None,
     from brokers.upstox import UpstoxBroker
     from brokers.angelone import AngelOneBroker
     from brokers.alpaca import AlpacaBroker
+    from brokers.mock import MockBroker
     registry = {
         "zerodha": ZerodhaBroker,
         "upstox": UpstoxBroker,
         "angelone": AngelOneBroker,
         "alpaca": AlpacaBroker,
+        "mock": MockBroker,
     }
     if name not in registry:
         raise ValueError(f"unknown broker '{name}' — choose one of {list(registry)}")
