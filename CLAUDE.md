@@ -248,10 +248,17 @@ Before any live capital, the strategy was validated on **real** free NSE data
 - `backtest/real_validate.py` — existing walk-forward on real prices + buy&hold.
 - `backtest/momentum.py` — cross-sectional momentum, survivorship-corrected.
 
-**Finding: no tradeable edge.** The weighted-indicator strategy returns ~0 vs
-buy&hold; momentum loses to Nifty and equal-weight once laggards are included.
-Only the 200d trend filter robustly helps (drawdown, not returns). Do not put
-real capital, or build predictive-analytics features, on these signals as-is.
+- `backtest/lowvol.py` — low-volatility anomaly (rank by trailing vol, hold
+  lowest, monthly rebalance).
+
+**Findings:** (1) weighted-indicator strategy returns ~0 vs buy&hold — no edge;
+(2) momentum loses to Nifty and equal-weight once laggards are added — no edge;
+(3) **low-volatility DOES show a risk-adjusted edge** — Sharpe 1.08 vs equal-weight
+0.94 vs Nifty 0.76, drawdown −29% vs −39%, beats Nifty on Sharpe in every
+sub-period, low turnover (cost/tax friendly). Documented anomaly, not curve-fit.
+Caveat: modest vs equal-weight, lags in strong bull rips, ~10y single sample,
+residual survivorship. It is the one candidate worth hardening before any capital;
+the timing/momentum signals are not.
 
 ## Live trading (Zerodha) — behind the compliance gate
 
