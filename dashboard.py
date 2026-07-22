@@ -27,6 +27,9 @@ from execution.engine import Engine
 
 DEMO_ID = "demo"
 REFRESH_SECS = 2
+# Demo stock watchlist (mock data — real tickers just for display; switching the
+# broker to zerodha with real keys makes these pull live quotes, no other change).
+WATCHLIST = ("RELIANCE", "TCS", "INFY", "HDFCBANK")
 
 st.set_page_config(page_title="Paper Trading — Mock", layout="wide")
 
@@ -44,7 +47,10 @@ def ensure_demo(conn):
     if c is None:
         c = service.create_customer(
             conn, id=DEMO_ID, name="Demo Tenant", email="demo@example.com",
-            broker="mock", equity=100_000.0, watchlist=("NIFTY-MOCK", "BANKNIFTY-MOCK"))
+            broker="mock", equity=100_000.0, watchlist=WATCHLIST)
+    elif tuple(c.watchlist) != WATCHLIST:  # keep an existing demo tenant's list current
+        c.watchlist = WATCHLIST
+        tstore.upsert_customer(conn, c)
     return c
 
 
