@@ -9,15 +9,30 @@ real history one bar at a time so the paper engine can walk forward over real
 prices; when it reaches the latest real bar it holds there."""
 from __future__ import annotations
 from brokers.base import Bar, Quote
-from data.yahoo_feed import YahooFeed
+from data.yahoo_feed import YahooFeed, FeedError
 
 
 class RealReplayFeed:
     def __init__(self, symbols=("RELIANCE",), warmup: int = 220, rng: str = "3y"):
-        self.symbols = tuple(symbols)
         yf = YahooFeed(interval="day", rng=rng)
-        self._series: dict[str, list[Bar]] = {s: yf.bars(s) for s in self.symbols}
-        self._maxlen = min(len(v) for v in self._series.values())
+        series: dict[str, list[Bar]] = {}
+        errors = []
+        for s in symbols:                       # tolerate per-symbol failures
+            try:
+                bars = yf.bars(s)
+                if bars:
+                    series[s] = bars
+                else:
+                    errors.append(f"{s}: no data")
+            except FeedError as e:
+                errors.append(str(e))
+        if not series:                          # nothing usable -> fail loudly, clearly
+            raise FeedError("no market data available (source down or symbols invalid): "
+                            + "; ".join(errors))
+        self.symbols = tuple(series)
+        self.errors = errors                    # symbols that were dropped (if any)
+        self._series = series
+        self._maxlen = min(len(v) for v in series.values())
         self._warmup = min(warmup, max(1, self._maxlen - 1))
         self._cursor = self._warmup
 

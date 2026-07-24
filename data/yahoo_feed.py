@@ -7,6 +7,7 @@ config.build_broker(...). NSE symbols use the `.NS` suffix; the Nifty 50 index i
 
 This is read-only market data for backtesting/validation — no orders, no auth."""
 from __future__ import annotations
+import time
 from datetime import datetime, timezone
 
 import httpx
@@ -26,24 +27,49 @@ def yahoo_symbol(symbol: str, suffix: str = ".NS") -> str:
     return f"{symbol}{suffix}"
 
 
+class FeedError(RuntimeError):
+    pass
+
+
 def fetch(symbol: str, interval: str = "day", rng: str = "5y",
-          timeout: float = 20.0, suffix: str = ".NS") -> list[Bar]:
-    r = httpx.get(BASE + yahoo_symbol(symbol, suffix),
-                  params={"range": rng, "interval": _INTERVAL.get(interval, "1d")},
-                  headers=_HEADERS, timeout=timeout)
-    r.raise_for_status()
-    res = r.json()["chart"]["result"][0]
+          timeout: float = 20.0, suffix: str = ".NS", retries: int = 2) -> list[Bar]:
+    """Fetch OHLCV, **back-adjusted for splits/dividends** using Yahoo's adjclose
+    so corporate actions don't appear as false price gaps. Retries transient
+    network/rate-limit errors; raises FeedError on give-up."""
+    last_err = None
+    for attempt in range(retries + 1):
+        try:
+            r = httpx.get(BASE + yahoo_symbol(symbol, suffix),
+                          params={"range": rng, "interval": _INTERVAL.get(interval, "1d")},
+                          headers=_HEADERS, timeout=timeout)
+            r.raise_for_status()
+            return _parse(r.json())
+        except Exception as e:                       # network, 429, malformed, etc.
+            last_err = e
+            if attempt < retries:
+                time.sleep(1.5 * (attempt + 1))
+    raise FeedError(f"could not fetch {symbol}: {last_err}")
+
+
+def _parse(payload) -> list[Bar]:
+    try:
+        res = payload["chart"]["result"][0]
+    except (KeyError, IndexError, TypeError):
+        raise FeedError("unexpected response shape from data source")
     ts = res.get("timestamp") or []
     q = res["indicators"]["quote"][0]
+    adj = (res["indicators"].get("adjclose") or [{}])[0].get("adjclose")
     bars: list[Bar] = []
     for i, t in enumerate(ts):
         o, h, l, c, v = q["open"][i], q["high"][i], q["low"][i], q["close"][i], q["volume"][i]
-        if None in (o, h, l, c):          # Yahoo emits gaps as null — skip them
+        if None in (o, h, l, c) or o <= 0 or c <= 0 or h < l:   # skip gaps / bad ticks
             continue
+        # back-adjust OHLC by the split/dividend factor (adjclose / close)
+        f = (adj[i] / c) if (adj and i < len(adj) and adj[i] is not None and c) else 1.0
         bars.append(Bar(
             ts=datetime.fromtimestamp(t, timezone.utc).date().isoformat(),
-            open=round(o, 2), high=round(h, 2), low=round(l, 2),
-            close=round(c, 2), volume=float(v or 0)))
+            open=round(o * f, 2), high=round(h * f, 2), low=round(l * f, 2),
+            close=round(c * f, 2), volume=float(v or 0)))
     return bars
 
 

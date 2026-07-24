@@ -133,7 +133,13 @@ if "conn" not in st.session_state:
 conn = st.session_state.conn
 customer = ensure_demo(conn)
 if "pipe" not in st.session_state:
-    st.session_state.pipe = build_pipeline(conn, customer)
+    try:
+        st.session_state.pipe = build_pipeline(conn, customer)
+    except Exception as e:                      # data source down / no network
+        st.error(f"⚠️ Could not load market data: {e}")
+        st.caption("The free data source may be unreachable or rate-limited. "
+                   "Check your connection and click Rerun.")
+        st.stop()
 if "running" not in st.session_state:
     st.session_state.running = False
 
