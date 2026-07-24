@@ -297,6 +297,25 @@ SEBI retail-algo rules (verify with the broker); start at 1 share to prove
 plumbing; taxes/slippage worsen the already-absent edge. Real-account validation
 requires the owner's own credentials — the code path is tested, live fills are not.
 
+## Live-data paper trading — low-vol portfolio
+
+The researched edge (low-vol) wired for **live-data paper trading** (real data,
+simulated orders, no real money):
+- `strategies/lowvol_portfolio.py` — `LowVolPortfolio.target_weights(history,
+  benchmark)`: rank universe by trailing vol, hold K calmest equal-weight; steps
+  to cash when the index is below its 200d SMA (risk-off).
+- `execution/rebalancer.py` — `rebalance(...)`: moves the paper book from current
+  holdings to target weights via paper orders; cash/value derived from the orders
+  log (stateless, DB-backed); idempotent (re-running places ~0 orders).
+- `execution/live_runner.py` — fetches real NSE data, computes targets,
+  rebalances a dedicated `lowvol_paper` tenant. `python -m execution.live_runner`
+  (rebalance now), `--status` (show portfolio), `--loop <secs>` (daily). Uses the
+  free Yahoo feed today; swap the data source to a broker for real-time once API
+  keys exist — strategy/rebalancer unchanged.
+
+Cadence is monthly by design. This is the validation harness to run for
+weeks/months on real data before any real capital. Still no real orders.
+
 ## Phase boundaries (do not build ahead)
 
 Phases 1-4 are **paper-only** (Phase 4 is mock data on top of paper). Live
