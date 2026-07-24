@@ -1,4 +1,5 @@
-"""Streamlit paper-trading dashboard for the `demo` tenant, mock data only.
+"""Streamlit paper-trading dashboard for the `demo` tenant — real NSE EOD equity
+data (free feed), paper execution (no real orders).
 
 Design contract (keep it swappable): this file reads market data ONLY through the
 Broker interface (get_historical / get_quote / get_positions) and reads trades
@@ -19,7 +20,7 @@ from plotly.subplots import make_subplots
 
 import config
 from data import store as dstore
-from data.mock_feed import MockFeed
+from data.real_feed import RealReplayFeed
 from tenancy import store as tstore, service
 from strategies.weighted_indicator import WeightedIndicatorStrategy
 from strategies import indicators as ind
@@ -78,7 +79,7 @@ def ensure_demo(conn):
 
 
 def build_pipeline(conn, customer):
-    feed = MockFeed(symbols=customer.watchlist, seed=11)
+    feed = RealReplayFeed(symbols=customer.watchlist)   # real NSE EOD equity data
     creds = service.load_broker_creds(conn, customer.id, customer.broker)
     broker = config.build_broker(
         customer.broker, quote_source=feed.quote_source,
@@ -146,16 +147,19 @@ if running:
     engine.step()
 
 # ---------- mode badge (very top, impossible to miss) ----------
-badge_color, badge_text = MODE_BADGE.get(
-    "live" if customer.mode == "live" else ("mock" if broker.name == "mock" else "paper"),
-    MODE_BADGE["paper"])
+# Data is real NSE EOD equity prices; order execution is still paper (no real
+# money). Badge reflects the customer's actual trade mode.
+if customer.mode == "live":
+    badge_color, badge_text = MODE_BADGE["live"]
+else:
+    badge_color, badge_text = "#388bfd", "PAPER · REAL NSE EQUITY DATA (EOD, delayed)"
 live_dot = (f"<span style='color:{PROFIT}'>● STREAMING</span>" if running
             else "<span style='color:#8b949e'>■ STOPPED</span>")
 st.markdown(
     f"<div style='background:{badge_color};color:#0d1117;padding:9px 16px;border-radius:10px;"
     f"font-weight:800;letter-spacing:.08em;display:flex;justify-content:space-between;"
-    f"align-items:center'><span>⚠ {badge_text}</span>"
-    f"<span style='font-size:.85rem;font-weight:700'>NO REAL ORDERS · NO BROKER CONNECTION</span>"
+    f"align-items:center'><span>{badge_text}</span>"
+    f"<span style='font-size:.85rem;font-weight:700'>NO REAL ORDERS · PAPER EXECUTION</span>"
     f"</div>", unsafe_allow_html=True)
 
 hc1, hc2 = st.columns([3, 2])
